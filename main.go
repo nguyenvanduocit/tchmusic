@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -40,11 +42,13 @@ type Song struct {
 }
 
 const (
-	redirectURI       = "http://localhost:8080/callback"
-	state             = "2019-12-14T00:40:29+07:00"
-	envPrefix         = "tch"
-	configName        = ".tchmusic"
-	musicInfoEndpoint = "https://api.thecoffeehouse.com/api/get_music_info"
+	loginCallbackPath  = "/callback"
+	loginServerAddress = "127.0.0.1:8090"
+	state              = "2019-12-14T00:40:29+07:00"
+	envPrefix          = "tch"
+	configName         = ".tchmusic"
+	configType         = "yaml"
+	musicInfoEndpoint  = "https://api.thecoffeehouse.com/api/get_music_info"
 )
 
 var (
@@ -66,31 +70,40 @@ func init() {
 	pflag.Parse()
 
 	// init config
+	homeDir, getHomeDirErr := os.UserHomeDir()
+	if getHomeDirErr != nil {
+		log.Fatal().Stack().Err(errors.WithStack(getHomeDirErr)).Send()
+	}
 	viper.BindPFlags(pflag.CommandLine)
 	viper.SetConfigName(configName)
-	viper.SetConfigType("yaml")
-	viper.AddConfigPath("$HOME")
+	viper.SetConfigType(configType)
+	viper.AddConfigPath(homeDir)
 	viper.SetEnvPrefix(envPrefix)
 	viper.AutomaticEnv()
 
 	if err := viper.ReadInConfig(); err != nil {
-		if _, isConfigFileNotFoundError := err.(viper.ConfigFileNotFoundError); !isConfigFileNotFoundError {
-			log.Error().Err(errors.New("can not read config from config file"))
+		if _, isConfigFileNotFoundError := err.(viper.ConfigFileNotFoundError); isConfigFileNotFoundError {
+			configPath := filepath.Join(homeDir, configName+"."+configType)
+			file, createErr := os.Create(configPath)
+			if createErr != nil {
+				log.Fatal().Stack().Err(createErr).Send()
+			}
+			file.Close()
 		}
 	}
-
-	if !viper.InConfig("client_id") {
+	if viper.GetString("client_id") == "" {
 		log.Fatal().Strs("missing_fields", []string{"client_id"}).Msg("required fields missing")
 	}
-	if !viper.InConfig("secret_key") {
+	if viper.GetString("secret_key") == "" {
 		log.Fatal().Strs("missing_fields", []string{"secret_key"}).Msg("required fields missing")
 	}
 	if err := viper.WriteConfig(); err != nil {
-		log.Fatal().Stack().Err(err).Msg("can not save config")
+		log.Fatal().Stack().Err(errors.WithStack(err)).Msg("can not save config")
 	}
 
 	// init Spotify client
-	auth = spotify.NewAuthenticator(redirectURI,
+	auth = spotify.NewAuthenticator(
+		"http://"+loginServerAddress+loginCallbackPath,
 		spotify.ScopeUserModifyPlaybackState,
 		spotify.ScopeUserReadPlaybackState,
 		spotify.ScopeUserReadCurrentlyPlaying,
@@ -107,14 +120,14 @@ func main() {
 		var err error
 		token, err = login()
 		if err != nil {
-			log.Fatal().Stack().Err(err).Send()
+			log.Fatal().Stack().Err(errors.WithStack(err)).Send()
 		}
 
 		viper.Set("access_token", token.AccessToken)
 		viper.Set("access_token_expiry", token.Expiry)
 		viper.Set("refresh_token", token.RefreshToken)
 		if err := viper.WriteConfig(); err != nil {
-			log.Fatal().Stack().Err(err).Send()
+			log.Fatal().Stack().Err(errors.WithStack(err)).Send()
 		}
 	} else {
 		refreshToken := viper.GetString("refresh_token")
@@ -131,7 +144,7 @@ func login() (*oauth2.Token, error) {
 	tokenChan := make(chan *oauth2.Token)
 	errChan := make(chan error)
 
-	http.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc(loginCallbackPath, func(w http.ResponseWriter, r *http.Request) {
 		token, err := auth.Token(state, r)
 		if err != nil {
 			http.Error(w, "Couldn't get token", http.StatusForbidden)
@@ -147,11 +160,11 @@ func login() (*oauth2.Token, error) {
 		fmt.Fprintf(w, `Success! Back to cli.<script>setTimeout(window.close, 5000);</script>`)
 		tokenChan <- token
 	})
-	go http.ListenAndServe("127.0.0.1:8090", nil)
+	go http.ListenAndServe(loginServerAddress, nil)
 
 	url := auth.AuthURL(state)
 	if err := browser.OpenURL(url); err != nil {
-		log.Fatal().Err(err).Send()
+		log.Fatal().Err(errors.WithStack(err)).Send()
 	}
 	select {
 	case err := <-errChan:
@@ -168,7 +181,7 @@ func startApp(token *oauth2.Token) {
 	for ; true; <-time.Tick(5 * time.Second) {
 		playerState, err := client.PlayerState()
 		if err != nil {
-			log.Error().Stack().Err(err).Send()
+			log.Error().Stack().Err(errors.WithStack(err)).Send()
 			continue
 		}
 		if playerState.Playing {
@@ -176,7 +189,7 @@ func startApp(token *oauth2.Token) {
 		}
 		song, err := getTchMusicInfo()
 		if err != nil {
-			log.Error().Stack().Err(err).Send()
+			log.Error().Stack().Err(errors.WithStack(err)).Send()
 			continue
 		}
 		if song == nil {
@@ -185,7 +198,7 @@ func startApp(token *oauth2.Token) {
 		}
 		log.Info().Str("tch_song", song.Name).Send()
 		if err := playSong(&client, song); err != nil {
-			log.Error().Stack().Err(err).Send()
+			log.Error().Stack().Err(errors.WithStack(err)).Send()
 			continue
 		}
 	}
@@ -208,7 +221,7 @@ func playSong(client *spotify.Client, song *Song) error {
 			if err == nil && topArtists != nil {
 				availableGenreSeeds = topArtists.Artists[0].Genres[:4]
 			} else {
-				log.Error().Stack().Err(err).Send()
+				log.Error().Stack().Err(errors.WithStack(err)).Send()
 				availableGenreSeeds = []string{"pop"}
 			}
 		}
