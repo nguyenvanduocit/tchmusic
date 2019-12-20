@@ -207,7 +207,7 @@ func startApp(token *oauth2.Token) {
 func playSong(client *spotify.Client, song *Song) error {
 	searchCountry := "VN"
 	searchLimit := 1
-	searchResult, err := client.SearchOpt("track:"+song.Name+" "+"artist:"+song.Artist, spotify.SearchTypeTrack, &spotify.Options{Country: &searchCountry, Limit: &searchLimit})
+	searchResult, err := client.SearchOpt("track:"+strings.ReplaceAll(song.Name, " ",  "+")+" "+"artist:"+strings.ReplaceAll(song.Artist, " ", "+"), spotify.SearchTypeTrack, &spotify.Options{Country: &searchCountry, Limit: &searchLimit})
 	if err != nil {
 		return err
 	}
