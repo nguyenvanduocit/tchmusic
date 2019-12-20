@@ -22,6 +22,13 @@ client_id:
 secret_key:
 ```
 
+hoặc enviroment variable:
+
+```
+set TCH_CLIENT_ID xxx
+set TCH_SECRET_KEY xxx
+```
+
 ## Sử dụng
 
 Mở Spotify lên và chọn một device, Trên PC thì có thể bấn play một bài hát nào đó rồi pause nó lại, khi đó Spotify sẽ set PC làm default device.
@@ -29,7 +36,7 @@ Mở Spotify lên và chọn một device, Trên PC thì có thể bấn play m�
 Chạy lệnh:
 
 ```
-tchmusic
+tchmusic --client_id xxx --secret_key xxx
 ```
 
 Browser sẽ mở lên yêu cầu bạn login. Sau khi login trang sẽ tự đóng. Giờ nếu Spotify đang play thì tchmusic sẽ đợi đên khi play xong sẽ kiểm tra bài mới. Nếu bài mới không tồn tại trên Spotify thì sẽ gợi ý cho bạn một bài hát khác dựa trên 4 Genres của top artist của bạn.
